@@ -150,6 +150,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   events:
   - {fileID: 11400000, guid: 87f8c6e8c0df0de4bb065466615fdbac, type: 2}
+  - {fileID: 11400000, guid: 3c1c3c94bca30ee46b6c209ea7a5e9c0, type: 2}
   startingData:
   - {fileID: 11400000, guid: 9c4747b3aef14004b858e1904885b552, type: 2}
   - {fileID: 11400000, guid: f903fe4ebf7c7304abd0e8f153268e38, type: 2}

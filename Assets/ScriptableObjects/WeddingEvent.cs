@@ -42,10 +42,9 @@ using UnityEngine;
 
         private PersonOfInterest GetMarriageTarget(Culture targetCulture)
         {
-            Debug.Log(targetCulture.peopleOfInterest.Count);
+//            Debug.Log(targetCulture.peopleOfInterest.Count);
             foreach (var person in targetCulture.peopleOfInterest)
             {
-                Debug.Log(person.age >= targetCulture.birthingAge && person.spouse == null);
                 if(person.age >= targetCulture.birthingAge && person.spouse == null )
                 {
                     return(person);

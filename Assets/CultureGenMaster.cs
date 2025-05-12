@@ -7,7 +7,7 @@ public class CultureGenMaster
     private List<ACulturalEvent> events = new List<ACulturalEvent>();
     private List<Culture> _cultures = new List<Culture>();
     private List<CultureStartingData> _cultureStartingDatas = new List<CultureStartingData>();
-    private int years = 10;
+    private int years = 100;
 
     public void Generate(List<ACulturalEvent> events, List<CultureStartingData> startingData)
     {
@@ -18,21 +18,47 @@ public class CultureGenMaster
         _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0));
         for (int year = 1; year <= years; year++)
         {
-            Debug.Log("current culture count " + _cultures.Count);
+//            Debug.Log("current culture count " + _cultures.Count);
             if (RollForNewCulture(year) is { } c)
             {
                 _cultures.Add(c);
             }
             foreach (var culture in _cultures)
             {
-                Debug.Log("Rolling for events for "+culture.name);
+//                Debug.Log("Rolling for events for "+culture.name);
                 RollForEvents(culture);
             }
+
+            AgePopulation(_cultures);
             Debug.Log("One year has passed. "+year);
+            Debug.Log("Total number of cultures " + _cultures.Count);
         }
     }
 
+    private void AgePopulation(List<Culture> cultures)
+    {
+        foreach (var culture in _cultures)
+        {
+            foreach (var person in culture.peopleOfInterest)
+            {
+                person.age++;
+                if (person.age >= culture.lifeSpan)
+                {
+                    Debug.Log(person.name + " has died at " + person.age + " years old.");
+                    culture.deadPeople.Add(person);
+                        
+                }
+            }
 
+            foreach (var person in culture.deadPeople)
+            {
+                if (culture.peopleOfInterest.Contains(person))
+                {
+                    culture.peopleOfInterest.Remove(person);
+                }
+            }
+        }
+    }
     
     Culture RollForNewCulture(int year)
     {
@@ -54,8 +80,8 @@ public class CultureGenMaster
             var rand = Random.Range(0, 100);
             if (rand < cultureEvent.chanceIn100)
             {
-                cultureEvent.DoAction(new List<Culture> { culture });
                 Debug.Log("Some Event Has Happened. " + cultureEvent.name +" for culture " + culture.name);
+                cultureEvent.DoAction(new List<Culture> { culture });
                 break;
             }
            
@@ -84,8 +110,7 @@ public enum PersonOfInterestRole
 {
     King,
     Queen,
-    Prince,
-    Princess,
+    Royalty,
     Advisor,
     Diplomat,
 }
@@ -99,6 +124,7 @@ public class Culture
     public List<Culture> friends;
     public List<Culture> enemies;
     public List<PersonOfInterest> peopleOfInterest;
+    public List<PersonOfInterest> deadPeople;
     public int birthingAge;
     public int lifeSpan;
 
@@ -116,7 +142,9 @@ public class Culture
         "Carmen", "Dean", "Elsa", "Finn", "Gabby", "Haley", "Ian", "Jill", "Kyle", "Lily",
         "Marcus", "Nina", "Oscar", "Paula", "Reed", "Sophie", "Tom", "Tiffany", "Vera", "Wes"
     };
-   
+
+    
+
 
     public Culture(CultureStartingData data, int yearFounded)
     {
@@ -128,8 +156,9 @@ public class Culture
         this.friends = new List<Culture>();
         this.enemies = new List<Culture>();
         this.peopleOfInterest = MakePeopleOfInterest(this);
-        Debug.Log("people of interest count " + peopleOfInterest.Count);
-        Debug.Log("Made new culture with name " + this.name);
+        this.deadPeople = new List<PersonOfInterest>();
+//        Debug.Log("people of interest count " + peopleOfInterest.Count);
+  //      Debug.Log("Made new culture with name " + this.name);
     }
 
     private List<PersonOfInterest> MakePeopleOfInterest(Culture culture)
