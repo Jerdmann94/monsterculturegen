@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using Unity.VisualScripting;
+using UnityEditor.Rendering;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 using Random = UnityEngine.Random;
 
 public class CultureGenMaster
@@ -11,22 +13,25 @@ public class CultureGenMaster
     private List<Culture> _cultures = new List<Culture>();
     private List<CultureStartingData> _cultureStartingDatas = new List<CultureStartingData>();
     private int years = 100;
+    public MapTile[,] map;
+    public static CultureGenMaster Instance;
 
     public void Generate(List<ACulturalEvent> events, List<CultureStartingData> startingData)
     {
-        var map = new MapTile[100,100];
+        Instance = this;
+        map = new MapTile[100,100];
         for (int i = 0; i < 100; i++)
         {
             for (int j = 0; j < 100; j++)
             {
-                map[i, j] = new MapTile();
+                map[i, j] = new MapTile(i,j);
             }
         }
         this._cultureStartingDatas = startingData;
         this.events = events;
-        _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition()));
-        _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition()));
-        _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition()));
+        _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition(),map));
+        _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition(),map));
+        _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition(),map));
         for (int year = 1; year <= years; year++)
         {
             
@@ -71,7 +76,7 @@ public class CultureGenMaster
             }
         }
         var choosenAction = choosableActions[Random.Range(0, choosableActions.Count)];
-        choosenAction.DoAction(new List<Culture> { culture });
+        culture.DoAction(choosenAction,new List<Culture> { culture });
         
         
     }
@@ -129,15 +134,27 @@ public class CultureGenMaster
         {
             var cultureData = _cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count-1)];
             Debug.Log("New Culture has formed "+cultureData.name);
-            return new Culture(cultureData,year,GetEmptyMapPosition());
+            return new Culture(cultureData,year,GetEmptyMapPosition(),map);
         }
 
         return null;
     }
 
+  
+
     private int[] GetEmptyMapPosition()
     {
-        throw new System.NotImplementedException();
+        bool returnable = false;
+        var coords = new int [2];
+        while (returnable == false)
+        {
+            int var1 = Random.Range(0, 100);
+            int var2 = Random.Range(0, 100);
+            returnable = map[var1, var2].culture == null;
+            coords = new[]{var1, var2};
+        }
+
+        return coords;
     }
 
     private void RollForEvents(Culture culture)
@@ -151,23 +168,28 @@ public class CultureGenMaster
                 cultureEvent.DoAction(new List<Culture> { culture });
                 break;
             }
-           
         }
     }
 }
 
 public class MapTile
 {
-    
+    public int myX;
+    public int myY;
     public int startingFood;
     public int foodRegen;
     public int maxPopulation;
     public Culture culture;
-    public MapTile()
+    public int currentPopulation;
+
+    public MapTile(int x, int y)
     {
+        this.myX = x;
+        this.myY = y;
         this.startingFood = Random.Range(0, 100);
         this.foodRegen = Random.Range(0, 100);
         this.maxPopulation = Random.Range(40, 100);
+        this.currentPopulation = 0;
         this.culture = null;
     }
 }
@@ -215,6 +237,7 @@ public class Culture
     public List<CultureAction> actions;
     public int currentActionResource;
     public int[] startingMapPosition;
+    public List<MapTile> tilesThisCultureIsOn;
 
     
     List<string> names = new List<string>
@@ -234,7 +257,7 @@ public class Culture
    
 
 
-    public Culture(CultureStartingData data, int yearFounded,int[] startingPosition)
+    public Culture(CultureStartingData data, int yearFounded,int[] startingPosition,MapTile[,] map)
     {
         this.name = data.name +" "+ yearFounded;
         this.yearFounded = yearFounded;
@@ -248,15 +271,25 @@ public class Culture
         this.food = Random.Range(10, 100);
         this.actions = MakeBasicActions();
         this.currentActionResource = 0;
-        SetMapCulture(startingPosition);
+        SetMapCulture(map[startingPosition[0],startingPosition[1]]);
         this.startingMapPosition = startingPosition;
 //        Debug.Log("people of interest count " + peopleOfInterest.Count);
         //      Debug.Log("Made new culture with name " + this.name);
     }
 
-    private void SetMapCulture(int[] startingPosition)
+    private void SetMapCulture(MapTile tile)
     {
-        throw new NotImplementedException();
+        tile.culture = this;
+        tilesThisCultureIsOn.Add(tile);
+    }
+
+    private void RecountPopulation()
+    {
+        var temp = 0;
+        foreach (var tile in tilesThisCultureIsOn)
+        {
+            temp += tile.currentPopulation;
+        }
     }
 
     private List<PersonOfInterest> MakePeopleOfInterest(Culture culture)
@@ -282,6 +315,12 @@ public class Culture
         list.Add(new CultureAction(2,"DeclareWar"));
         return list;
     }
+
+    public void DoAction(CultureAction choosenAction, List<Culture> culturesInvolved)
+    {
+        choosenAction.DoAction(culturesInvolved);
+        RecountPopulation();
+    }
 }
 
 public class CultureAction
@@ -305,6 +344,8 @@ public class CultureAction
         {
             case "ExpandDomain":
                 Debug.Log("ExpandDomain");
+                var testTile = culture.tilesThisCultureIsOn[Random.Range(0, culture.tilesThisCultureIsOn.Count)];
+                var targetTile = GetEmptyTileAdjacentToThisTile(testTile);
                 break;
             case "GrowPopulation":
                 Debug.Log("GrowPopulation");
@@ -321,6 +362,42 @@ public class CultureAction
             default:
                 break;
         }
+    }
+
+    private MapTile GetEmptyTileAdjacentToThisTile(MapTile testTile)
+    {
+        var tiles = new List<MapTile>();
+        var map = CultureGenMaster.Instance.map;
+        if(testTile.myX+1 < map.Length)
+        {
+            if (map[testTile.myX+1, testTile.myY] == null)
+            {
+                tiles.Add(new MapTile(testTile.myX+1, testTile.myY));   
+            }
+        }
+        if(testTile.myX-1 > -1)
+        {
+            if (map[testTile.myX-1, testTile.myY] == null)
+            {
+                tiles.Add(new MapTile(testTile.myX-1, testTile.myY));   
+                
+            }
+        }
+        if(testTile.myY+1 < map.Length)
+        {
+            if (map[testTile.myX, testTile.myY+1] == null)
+            {
+                tiles.Add(new MapTile(testTile.myX, testTile.myY+1));   
+            }
+        }
+        if(testTile.myY-1 > -1)
+        {
+            if (map[testTile.myX, testTile.myY-1] == null)
+            {
+                tiles.Add(new MapTile(testTile.myX, testTile.myY-1));   
+            }
+        }
+        return tiles[Random.Range(0, tiles.Count)];
     }
 }
 
