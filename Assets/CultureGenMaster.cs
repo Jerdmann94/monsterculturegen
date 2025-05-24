@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using NUnit.Framework;
 using Unity.VisualScripting;
 using UnityEditor.Rendering;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using UnityEngine.WSA;
 using Random = UnityEngine.Random;
 
 public class CultureGenMaster
@@ -58,25 +60,100 @@ public class CultureGenMaster
                 RollForEvents(culture);
             }
 
-            AgePopulation(_cultures);
+            DoYearlyDuties(_cultures);
+            
             Debug.Log("One year has passed. "+year);
             Debug.Log("Total number of cultures " + _cultures.Count);
         }
     }
 
+    private void DoYearlyDuties(List<Culture> cultures)
+    {
+        
+        CheckFoodHappinessRevoltsStarvation(cultures);
+        AgePopulation(cultures);
+    }
+
+    private void CheckFoodHappinessRevoltsStarvation(List<Culture> cultures)
+    {
+        foreach (var culture in cultures)
+        {
+            //COUNT TOTAL FOOD
+            var currentTotalFood = 0;
+            foreach (var tile in culture.tilesThisCultureIsOn)
+            {
+                tile.currentFood += tile.foodRegen;
+                //ADDING ARBITRARY TOTAL TILE FOOD OF 200 FOR NOW
+                if (tile.currentFood > 200) tile.currentFood = 200;
+                currentTotalFood += tile.currentFood;
+            }
+            //CHECK FOR STARVATION
+            if (currentTotalFood < culture.totalPopulation)
+            {
+                culture.currentHappiness -= 10;
+                if (culture.currentHappiness < 0) culture.currentHappiness = 0;
+                CheckForStarvation(culture);
+            }
+            //CHECK FOR REVOLTS
+            
+        }
+    }
+
+    private void CheckForStarvation(Culture culture)
+    {
+        var happinessModifer = culture.currentHappiness > 50 ? 1 : -1;
+        var dieResult = DiceRoll.Roll2d6();
+        var totalResult = dieResult+happinessModifer;
+        switch (totalResult)
+        {
+            case < 4: // Handles values less than 4
+                Debug.Log("Severe Starvation for "+culture.name);
+                culture.currentHappiness -= 10;
+                DoStarvationTileTax(5, culture);
+                break;
+            case >= 3 and < 8: // Handles values between 3 (inclusive) and 8 (exclusive)
+                Debug.Log("Starvation for "+culture.name);
+                culture.currentHappiness -= 5;
+                DoStarvationTileTax(2, culture);
+                break;
+            case >= 8:
+                Debug.Log("Starvation Avoided for "+culture.name);
+                break;
+            default: // Handles all other values
+                Console.WriteLine("Result is 8 or greater");
+                break;
+        }
+    }
+
+    private void DoStarvationTileTax(int starvationValue, Culture culture)
+    {
+        var tilesToBeRemoved = new List<MapTile>();
+        foreach (var tile in culture.tilesThisCultureIsOn)
+        {
+            tile.currentPopulation -= starvationValue;
+            if (tile.currentPopulation < 0) tilesToBeRemoved.Add(tile);
+        }
+
+        while (tilesToBeRemoved.Count > 0)
+        {
+            culture.RemoveMapCulture(tilesToBeRemoved[0]);
+        }
+        
+    }
+
     private void MakeCultureActionChoice(Culture culture)
     {
-        var choosableActions = new List<CultureAction>();
+        var possibleActions = new List<CultureAction>();
 
         foreach (var action in culture.actions)
         {
             if (action.cost <= culture.currentActionResource)
             {
-                choosableActions.Add(action);
+                possibleActions.Add(action);
             }
         }
-        var choosenAction = choosableActions[Random.Range(0, choosableActions.Count)];
-        culture.DoAction(choosenAction,new List<Culture> { culture });
+        var chosenAction = possibleActions[Random.Range(0, possibleActions.Count)];
+        culture.DoAction(chosenAction,new List<Culture> { culture });
         
         
     }
@@ -176,7 +253,7 @@ public class MapTile
 {
     public int myX;
     public int myY;
-    public int startingFood;
+    public int currentFood;
     public int foodRegen;
     public int maxPopulation;
     public Culture culture;
@@ -186,7 +263,7 @@ public class MapTile
     {
         this.myX = x;
         this.myY = y;
-        this.startingFood = Random.Range(0, 100);
+        this.currentFood = Random.Range(0, 100);
         this.foodRegen = Random.Range(0, 100);
         this.maxPopulation = Random.Range(40, 100);
         this.currentPopulation = 0;
@@ -238,6 +315,7 @@ public class Culture
     public int currentActionResource;
     public int[] startingMapPosition;
     public List<MapTile> tilesThisCultureIsOn;
+    public int currentHappiness;
 
     
     List<string> names = new List<string>
@@ -273,14 +351,21 @@ public class Culture
         this.currentActionResource = 0;
         SetMapCulture(map[startingPosition[0],startingPosition[1]]);
         this.startingMapPosition = startingPosition;
+        this.currentHappiness = 50;
 //        Debug.Log("people of interest count " + peopleOfInterest.Count);
         //      Debug.Log("Made new culture with name " + this.name);
     }
 
-    private void SetMapCulture(MapTile tile)
+    public void SetMapCulture(MapTile tile)
     {
         tile.culture = this;
         tilesThisCultureIsOn.Add(tile);
+    }
+    public void RemoveMapCulture(MapTile tile)
+    {
+        tile.culture = null;
+        tilesThisCultureIsOn.Remove(tile);
+        tile.currentPopulation = 0;
     }
 
     private void RecountPopulation()
@@ -288,6 +373,10 @@ public class Culture
         var temp = 0;
         foreach (var tile in tilesThisCultureIsOn)
         {
+            if (tile.currentPopulation > tile.maxPopulation)
+            {
+                tile.currentPopulation = tile.maxPopulation;
+            }
             temp += tile.currentPopulation;
         }
     }
@@ -321,6 +410,8 @@ public class Culture
         choosenAction.DoAction(culturesInvolved);
         RecountPopulation();
     }
+
+    
 }
 
 public class CultureAction
@@ -346,8 +437,28 @@ public class CultureAction
                 Debug.Log("ExpandDomain");
                 var testTile = culture.tilesThisCultureIsOn[Random.Range(0, culture.tilesThisCultureIsOn.Count)];
                 var targetTile = GetEmptyTileAdjacentToThisTile(testTile);
+                if (targetTile != null)
+                {
+                    culture.SetMapCulture(targetTile);
+                    var halfPop = testTile.currentPopulation / 2;
+                    targetTile.currentPopulation = halfPop;
+                    testTile.currentPopulation = halfPop;
+                }
                 break;
             case "GrowPopulation":
+                foreach (var tile in culture.tilesThisCultureIsOn)
+                {
+                    if(tile.currentPopulation >= tile.maxPopulation) continue;
+                    culture.food -= tile.currentPopulation/2;
+                    if (culture.food < 0)
+                    {
+                        culture.food = 0;
+                        Debug.Log(culture.name + " ran out of food while growing population.");
+                        break;
+                    }
+                    tile.currentPopulation += 5;
+                    if(tile.currentPopulation >= tile.maxPopulation) tile.currentPopulation = tile.maxPopulation;
+                }
                 Debug.Log("GrowPopulation");
                 break;
             case "BuildMonument":
@@ -358,6 +469,8 @@ public class CultureAction
                 break;
             case "DeclareWar":
                 Debug.Log("DeclareWar");
+                break;
+            case "Marriage":
                 break;
             default:
                 break;
@@ -397,11 +510,37 @@ public class CultureAction
                 tiles.Add(new MapTile(testTile.myX, testTile.myY-1));   
             }
         }
-        return tiles[Random.Range(0, tiles.Count)];
+
+        return tiles.Count == 0 ? null : tiles[Random.Range(0, tiles.Count)];
     }
 }
 
 
 
 
+/*
+ DICE STATISTICS FOR 2D6 RESULTS
+ * Dice Score	Result exactly	Result or less	Result or more
+    2	            2.77	        2.77	    100
+    3	            5.55	        8.33	    97.22
+    4	            8.33	        16.66	    91.66
+    5	            11.11	        27.77	    83.33
+    6	            13.88	        41.66	    72.22
+    7	            16.66	        58.33	    58.33
+    8	            13.88	        72.22	    41.66
+    9	            11.11	        83.33	    27.77
+    10	            8.33	        91.66	    16.66
+    11	            5.55	        97.22	    8.33
+    12	            2.77	        100	        2.77
+ */
+public static class DiceRoll
+{
+    public static int Roll2d6()
+    {
+        System.Random random = new System.Random();
+        int die1 = random.Next(1, 7); // Generates a number between 1 and 6
+        int die2 = random.Next(1, 7); // Generates a number between 1 and 6
+        return die1 + die2; // Returns the sum of both dice
+    }
+}
 
