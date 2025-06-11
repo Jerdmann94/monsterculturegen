@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Unity.VisualScripting;
 using UnityEditor.Rendering;
@@ -14,17 +15,18 @@ public class CultureGenMaster
     private List<ACulturalEvent> events = new List<ACulturalEvent>();
     private List<Culture> _cultures = new List<Culture>();
     private List<CultureStartingData> _cultureStartingDatas = new List<CultureStartingData>();
-    private int years = 100;
+    private int years = 1000;
     public MapTile[,] map;
     public static CultureGenMaster Instance;
-
-    public void Generate(List<ACulturalEvent> events, List<CultureStartingData> startingData)
+    public int currentYear;
+    public readonly int MAPSIZE = 100;
+    public (MapTile[,], List<Culture>) Generate(List<ACulturalEvent> events, List<CultureStartingData> startingData)
     {
         Instance = this;
-        map = new MapTile[100,100];
-        for (int i = 0; i < 100; i++)
+        map = new MapTile[MAPSIZE,MAPSIZE];
+        for (int i = 0; i < MAPSIZE; i++)
         {
-            for (int j = 0; j < 100; j++)
+            for (int j = 0; j < MAPSIZE; j++)
             {
                 map[i, j] = new MapTile(i,j);
             }
@@ -34,57 +36,104 @@ public class CultureGenMaster
         _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition(),map));
         _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition(),map));
         _cultures.Add(new Culture(_cultureStartingDatas[Random.Range(0, _cultureStartingDatas.Count)], 0,GetEmptyMapPosition(),map));
-        for (int year = 1; year <= years; year++)
+        for (currentYear = 1; currentYear <= years; currentYear++)
         {
             
             //DO CULTURE ACTIONS
             ResetCultureActionEconomy();
+            var iterations = 0;
+            //ROLL FOR NEW CULTURES
+            if (RollForNewCulture(currentYear) is { } c)
+            {
+                _cultures.Add(c);
+            }
             while (DoAnyCulturesHaveActionsAvailable())
             {
                 foreach (var culture in _cultures)
                 {
                     if (culture.currentActionResource > 0) MakeCultureActionChoice(culture);
                 }
+                if(iterations++ > 1000)
+                {
+                    Debug.Log("WHILE BREAKOUT HAPPENED AT CULTURE ACTIONS");
+                    break;
+                }
             }
-//            Debug.Log("current culture count " + _cultures.Count);
-
-            //ROLL FOR NEW CULTURES
-            if (RollForNewCulture(year) is { } c)
-            {
-                _cultures.Add(c);
-            }
+            
+            //REMOVING THESE EVENTS FOR NOW. GOING TO REPLACE THESE WITH ACTIONS
             //ROLL FOR CULTURE EVENTS
             foreach (var culture in _cultures)
             {
 //                Debug.Log("Rolling for events for "+culture.name);
-                RollForEvents(culture);
+               // RollForEvents(culture);
             }
 
             DoYearlyDuties(_cultures);
             
-            Debug.Log("One year has passed. "+year);
+            Debug.Log("One year has passed. "+currentYear);
             Debug.Log("Total number of cultures " + _cultures.Count);
         }
+
+        foreach (var culture in _cultures)
+        {
+            culture.PrintInfo();
+        }
+        
+
+        return (map, _cultures);
     }
 
     private void DoYearlyDuties(List<Culture> cultures)
     {
-        
         CheckFoodHappinessRevoltsStarvation(cultures);
         AgePopulation(cultures);
+        CheckForDeadCultures(cultures);
+    }
+
+    private void CheckForDeadCultures(List<Culture> cultures)
+    {
+        var toBeRemoved = new List<Culture>();
+        foreach (var culture in _cultures)
+        {
+            if (culture.tilesThisCultureIsOn.Count == 0 ) toBeRemoved.Add(culture);
+            if(culture.totalPopulation < 1) toBeRemoved.Add(culture);
+        }
+
+        foreach (var culture in toBeRemoved)
+        {
+            cultures.Remove(culture);
+
+            // Remove culture from all associated tiles
+            foreach (var tile in culture.tilesThisCultureIsOn.ToList()) // Use `ToList()` to safely iterate over a collection that is being modified
+            {
+                culture.RemoveMapCulture(tile);
+            }
+
+            Debug.Log($"{culture.name} has been killed at year "+currentYear+". Removed from Culture List");
+        }
     }
 
     private void CheckFoodHappinessRevoltsStarvation(List<Culture> cultures)
     {
         foreach (var culture in cultures)
         {
+            
+            //UPDATE HAPINESS
+            var monumentCount = 0;
+            foreach (var maptile in culture.tilesThisCultureIsOn)
+            {
+               monumentCount += maptile.currentMonuments.Count;
+                
+            }
+            culture.currentHappiness += monumentCount;
+            if(culture.currentHappiness > 100) culture.currentHappiness = 100;
             //COUNT TOTAL FOOD
             var currentTotalFood = 0;
             foreach (var tile in culture.tilesThisCultureIsOn)
             {
-                tile.currentFood += tile.foodRegen;
-                //ADDING ARBITRARY TOTAL TILE FOOD OF 200 FOR NOW
-                if (tile.currentFood > 200) tile.currentFood = 200;
+                //tile.currentFood += tile.foodRegen;
+                //MAX TILE FOOD IS EQUAL TO TILE REGEN
+                if (tile.currentFood > tile.foodRegen) tile.currentFood = tile.foodRegen;
                 currentTotalFood += tile.currentFood;
             }
             //CHECK FOR STARVATION
@@ -95,8 +144,47 @@ public class CultureGenMaster
                 CheckForStarvation(culture);
             }
             //CHECK FOR REVOLTS
-            
+            if (culture.currentHappiness < 50)
+            {
+                CheckForRevolt(culture);
+            }
         }
+    }
+
+    private void CheckForRevolt(Culture culture)
+    {
+        var revoltModifer = culture.currentHappiness > 30 ? -1 : -3;
+        var dieResult = DiceRoll.Roll2d6();
+        var totalResult = dieResult+revoltModifer;
+        switch (totalResult)
+        {
+            case < 4: // Handles values less than 4
+                Debug.Log("Severe Revolt for "+culture.name);
+                DoRevolt(culture);
+                DoRevolt(culture);
+                DoRevolt(culture);
+                break;
+            case < 7: // Handles values between 3 (inclusive) and 8 (exclusive)
+                Debug.Log("Revolt for "+culture.name);
+                DoRevolt(culture);
+                break;
+            case >= 7:
+                Debug.Log("Revolt Avoided for "+culture.name);
+                break;
+            default: // Handles all other values
+                Console.WriteLine("Result is 8 or greater");
+                break;
+        }
+    }
+
+    private void DoRevolt(Culture culture)
+    {
+        if (culture.tilesThisCultureIsOn.Count < 2) return;
+        var tileToRevolt = culture.GetTileFromThisCulture();
+        culture.RemoveMapCulture(tileToRevolt);
+        var newCulture = new Culture(culture.myStartingData,currentYear,new []{tileToRevolt.myX,tileToRevolt.myY},map);
+        newCulture.enemies.Add(culture);
+        culture.enemies.Add(newCulture);
     }
 
     private void CheckForStarvation(Culture culture)
@@ -111,12 +199,12 @@ public class CultureGenMaster
                 culture.currentHappiness -= 10;
                 DoStarvationTileTax(5, culture);
                 break;
-            case >= 3 and < 8: // Handles values between 3 (inclusive) and 8 (exclusive)
+            case >= 3 and < 7: // Handles values between 3 (inclusive) and 8 (exclusive)
                 Debug.Log("Starvation for "+culture.name);
                 culture.currentHappiness -= 5;
                 DoStarvationTileTax(2, culture);
                 break;
-            case >= 8:
+            case >= 7:
                 Debug.Log("Starvation Avoided for "+culture.name);
                 break;
             default: // Handles all other values
@@ -134,9 +222,15 @@ public class CultureGenMaster
             if (tile.currentPopulation < 0) tilesToBeRemoved.Add(tile);
         }
 
+        var iterations = 0;
         while (tilesToBeRemoved.Count > 0)
         {
             culture.RemoveMapCulture(tilesToBeRemoved[0]);
+            if(iterations++ > 1000)
+            {
+                Debug.Log("WHILE BREAKOUT HAPPENED AT TILES TO BE REMOVED");
+                break;
+            }
         }
         
     }
@@ -152,17 +246,78 @@ public class CultureGenMaster
                 possibleActions.Add(action);
             }
         }
-        var chosenAction = possibleActions[Random.Range(0, possibleActions.Count)];
-        culture.DoAction(chosenAction,new List<Culture> { culture });
+
+        var chosenAction = VoteForActionFromCulture(possibleActions,culture);
+        if (chosenAction == null)
+        {
+            culture.currentActionResource--;
+        }
+        else
+        {
+            culture.DoAction(chosenAction,new List<Culture> { culture });
+        }
+       
         
         
+    }
+
+    private CultureAction VoteForActionFromCulture(List<CultureAction> possibleActions, Culture culture)
+    {
+        var people = culture.peopleOfInterest;
+        var votePool = new List<CultureAction>();
+        foreach (var person in people)
+        {
+            var votes = person.MakeVoteFromActions(possibleActions);
+            foreach (var vote in votes)
+            {
+                votePool.Add(vote);
+            }
+        }
+        
+        // CHECK FOR A MAJORITY VOTE
+        if (votePool.Count == 0) 
+        {
+            // If there are no votes, return a "chaos" action or handle the case accordingly.
+            return null; // or your chosen "Chaos" indicator.
+        }
+
+        // Calculate the majority threshold
+        //MAJORITY THRESHHOLD IS 25% OF VOTES
+        int majorityThreshold = votePool.Count / 4;
+
+        // Count votes using a dictionary
+        var voteCounts = new Dictionary<CultureAction, int>();
+        foreach (var vote in votePool)
+        {
+            if (voteCounts.ContainsKey(vote))
+            {
+                voteCounts[vote]++;
+            }
+            else
+            {
+                voteCounts[vote] = 1;
+            }
+        }
+
+        // Find if there’s a majority
+        foreach (var kvp in voteCounts)
+        {
+            if (kvp.Value > majorityThreshold)
+            {
+                return kvp.Key; // Return the action that has the majority
+            }
+        }
+
+        // If no majority vote, chaos (or an action to indicate no consensus)
+        Debug.Log("NO VOTE MAJORITY HAS REACHED, CHAOS RETURNED");
+        return null; // or handle "chaos" logic here
     }
 
     private void ResetCultureActionEconomy()
     {
         foreach (var culture in _cultures)
         {
-            culture.currentActionResource = culture.totalPopulation / 10;
+            culture.currentActionResource = culture.totalPopulation / 3;
         }
     }
 
@@ -183,15 +338,23 @@ public class CultureGenMaster
     {
         foreach (var culture in _cultures)
         {
+            var toRemove = new List<PersonOfInterest>();
             foreach (var person in culture.peopleOfInterest)
             {
                 person.age++;
                 if (person.age >= culture.lifeSpan)
                 {
                     Debug.Log(person.name + " has died at " + person.age + " years old.");
-                    culture.deadPeople.Add(person);
-                        
+        
+                    // Mark person for removal
+                    toRemove.Add(person);
                 }
+            }
+
+// Remove marked people
+            foreach (var person in toRemove)
+            {
+                culture.KillPersonOfInterest(person);
             }
 
             foreach (var person in culture.deadPeople)
@@ -204,6 +367,7 @@ public class CultureGenMaster
         }
     }
     
+
     Culture RollForNewCulture(int year)
     {
         var rand = Random.Range(0, 100);
@@ -223,12 +387,18 @@ public class CultureGenMaster
     {
         bool returnable = false;
         var coords = new int [2];
+        var iterations = 0;
         while (returnable == false)
         {
-            int var1 = Random.Range(0, 100);
-            int var2 = Random.Range(0, 100);
+            int var1 = Random.Range(0, MAPSIZE);
+            int var2 = Random.Range(0, MAPSIZE);
             returnable = map[var1, var2].culture == null;
             coords = new[]{var1, var2};
+            if(iterations++ > 1000)
+            {
+                Debug.Log("WHILE BREAKOUT HAPPENED AT GET EMPTY MAP");
+                break;
+            }
         }
 
         return coords;
@@ -247,6 +417,11 @@ public class CultureGenMaster
             }
         }
     }
+
+    public List<Culture> GetCultures()
+    {
+        return _cultures;
+    }
 }
 
 public class MapTile
@@ -258,262 +433,36 @@ public class MapTile
     public int maxPopulation;
     public Culture culture;
     public int currentPopulation;
+    public List<TileMonument> currentMonuments;
 
     public MapTile(int x, int y)
     {
         this.myX = x;
         this.myY = y;
-        this.currentFood = Random.Range(0, 100);
-        this.foodRegen = Random.Range(0, 100);
-        this.maxPopulation = Random.Range(40, 100);
+        this.currentFood = Random.Range(20, 100);
+        this.foodRegen = Random.Range(20, 100);
+        this.maxPopulation = Random.Range(20, 100);
         this.currentPopulation = 0;
         this.culture = null;
+        currentMonuments = new List<TileMonument>();
     }
+
 }
 
-public class PersonOfInterest
+public class TileMonument
 {
-    public int age;
-    public PersonOfInterest spouse = null;
-    public PersonOfInterestRole role = PersonOfInterestRole.King;
-    public Culture originalCulture;
     public string name;
-    public PersonOfInterest(int age, PersonOfInterest spouse, PersonOfInterestRole role,Culture culture,string name)
+    public MapTile tile;
+
+    public TileMonument(MapTile tile)
     {
-        this.age = age;
-        this.spouse = spouse;
-        this.role = role;
-        this.originalCulture = culture;
-        this.name = name;
+        this.tile = tile;
+        name = "NEW MONUMENT";
     }
     
 }
 
-public enum PersonOfInterestRole
-{
-    King,
-    Queen,
-    Royalty,
-    Advisor,
-    Diplomat,
-}
 
-
-public class Culture
-{
-    public string name;
-    public int yearFounded;
-    public int totalPopulation;
-    public List<Culture> friends;
-    public List<Culture> enemies;
-    public List<PersonOfInterest> peopleOfInterest;
-    public List<PersonOfInterest> deadPeople;
-    public int birthingAge;
-    public int lifeSpan;
-    public int food;
-    public List<CultureAction> actions;
-    public int currentActionResource;
-    public int[] startingMapPosition;
-    public List<MapTile> tilesThisCultureIsOn;
-    public int currentHappiness;
-
-    
-    List<string> names = new List<string>
-    {
-        "Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Hannah", "Isaac", "Jack",
-        "Karen", "Liam", "Mia", "Nathan", "Olivia", "Paul", "Quinn", "Rachel", "Sam", "Tina",
-        "Uma", "Victor", "Wendy", "Xander", "Yara", "Zane", "Amber", "Brian", "Cathy", "Derek",
-        "Elena", "Fred", "Gina", "Harry", "Ivy", "Jon", "Katie", "Leo", "Megan", "Noah",
-        "Opal", "Peter", "Queen", "Riley", "Scott", "Tara", "Ulysses", "Violet", "Will", "Xenia",
-        "Yusuf", "Zoe", "Annie", "Ben", "Carla", "Dylan", "Emily", "Felix", "Georgia", "Hector",
-        "Isla", "Jake", "Kara", "Luca", "Molly", "Nick", "Owen", "Penny", "Quincy", "Rose",
-        "Shawn", "Tracy", "Uri", "Val", "Wanda", "Ximena", "Yvette", "Zack", "April", "Brent",
-        "Carmen", "Dean", "Elsa", "Finn", "Gabby", "Haley", "Ian", "Jill", "Kyle", "Lily",
-        "Marcus", "Nina", "Oscar", "Paula", "Reed", "Sophie", "Tom", "Tiffany", "Vera", "Wes"
-    };
-
-   
-
-
-    public Culture(CultureStartingData data, int yearFounded,int[] startingPosition,MapTile[,] map)
-    {
-        this.name = data.name +" "+ yearFounded;
-        this.yearFounded = yearFounded;
-        this.birthingAge = data.birthingAge;
-        this.lifeSpan = data.lifeSpan;
-        this.friends = new List<Culture>();
-        this.enemies = new List<Culture>();
-        this.peopleOfInterest = MakePeopleOfInterest(this);
-        this.deadPeople = new List<PersonOfInterest>();
-        this.totalPopulation = Random.Range(10, 100);
-        this.food = Random.Range(10, 100);
-        this.actions = MakeBasicActions();
-        this.currentActionResource = 0;
-        SetMapCulture(map[startingPosition[0],startingPosition[1]]);
-        this.startingMapPosition = startingPosition;
-        this.currentHappiness = 50;
-//        Debug.Log("people of interest count " + peopleOfInterest.Count);
-        //      Debug.Log("Made new culture with name " + this.name);
-    }
-
-    public void SetMapCulture(MapTile tile)
-    {
-        tile.culture = this;
-        tilesThisCultureIsOn.Add(tile);
-    }
-    public void RemoveMapCulture(MapTile tile)
-    {
-        tile.culture = null;
-        tilesThisCultureIsOn.Remove(tile);
-        tile.currentPopulation = 0;
-    }
-
-    private void RecountPopulation()
-    {
-        var temp = 0;
-        foreach (var tile in tilesThisCultureIsOn)
-        {
-            if (tile.currentPopulation > tile.maxPopulation)
-            {
-                tile.currentPopulation = tile.maxPopulation;
-            }
-            temp += tile.currentPopulation;
-        }
-    }
-
-    private List<PersonOfInterest> MakePeopleOfInterest(Culture culture)
-    {
-        var people = new List<PersonOfInterest>();
-        people.Add(new PersonOfInterest(culture.birthingAge+1,null,PersonOfInterestRole.King,culture,names[Random.Range(0,names.Count)] +" "+ culture.name));
-        var rand = Random.Range(0, 5);
-        for (int i = 0; i <= rand; i++)
-        {
-            people.Add(new PersonOfInterest(culture.birthingAge+1,null,PersonOfInterestRole.Advisor,culture,names[Random.Range(0,names.Count)] +" "+ culture.name));
-        }
-        
-        return people;
-    }
-
-    private List<CultureAction> MakeBasicActions()
-    {
-        var list = new List<CultureAction>();
-        list.Add(new CultureAction(3, "ExpandDomain"));
-        list.Add(new CultureAction(2, "GrowPopulation"));
-        list.Add(new CultureAction(5, "BuildMonument"));
-        list.Add(new CultureAction(1,"SowFields"));
-        list.Add(new CultureAction(2,"DeclareWar"));
-        return list;
-    }
-
-    public void DoAction(CultureAction choosenAction, List<Culture> culturesInvolved)
-    {
-        choosenAction.DoAction(culturesInvolved);
-        RecountPopulation();
-    }
-
-    
-}
-
-public class CultureAction
-{
-    public int cost;
-    public string name;
-
-    public CultureAction(int cost, string name)
-    {
-        this.cost = cost;
-        this.name = name;
-    }
-
-  
-    public void DoAction(List<Culture> cultures)
-    {
-        
-        var culture = cultures[0];
-        culture.currentActionResource -= cost;
-        switch (name)
-        {
-            case "ExpandDomain":
-                Debug.Log("ExpandDomain");
-                var testTile = culture.tilesThisCultureIsOn[Random.Range(0, culture.tilesThisCultureIsOn.Count)];
-                var targetTile = GetEmptyTileAdjacentToThisTile(testTile);
-                if (targetTile != null)
-                {
-                    culture.SetMapCulture(targetTile);
-                    var halfPop = testTile.currentPopulation / 2;
-                    targetTile.currentPopulation = halfPop;
-                    testTile.currentPopulation = halfPop;
-                }
-                break;
-            case "GrowPopulation":
-                foreach (var tile in culture.tilesThisCultureIsOn)
-                {
-                    if(tile.currentPopulation >= tile.maxPopulation) continue;
-                    culture.food -= tile.currentPopulation/2;
-                    if (culture.food < 0)
-                    {
-                        culture.food = 0;
-                        Debug.Log(culture.name + " ran out of food while growing population.");
-                        break;
-                    }
-                    tile.currentPopulation += 5;
-                    if(tile.currentPopulation >= tile.maxPopulation) tile.currentPopulation = tile.maxPopulation;
-                }
-                Debug.Log("GrowPopulation");
-                break;
-            case "BuildMonument":
-                Debug.Log("BuildMonument");
-                break;
-            case "SowFields":
-                Debug.Log("SowFields");
-                break;
-            case "DeclareWar":
-                Debug.Log("DeclareWar");
-                break;
-            case "Marriage":
-                break;
-            default:
-                break;
-        }
-    }
-
-    private MapTile GetEmptyTileAdjacentToThisTile(MapTile testTile)
-    {
-        var tiles = new List<MapTile>();
-        var map = CultureGenMaster.Instance.map;
-        if(testTile.myX+1 < map.Length)
-        {
-            if (map[testTile.myX+1, testTile.myY] == null)
-            {
-                tiles.Add(new MapTile(testTile.myX+1, testTile.myY));   
-            }
-        }
-        if(testTile.myX-1 > -1)
-        {
-            if (map[testTile.myX-1, testTile.myY] == null)
-            {
-                tiles.Add(new MapTile(testTile.myX-1, testTile.myY));   
-                
-            }
-        }
-        if(testTile.myY+1 < map.Length)
-        {
-            if (map[testTile.myX, testTile.myY+1] == null)
-            {
-                tiles.Add(new MapTile(testTile.myX, testTile.myY+1));   
-            }
-        }
-        if(testTile.myY-1 > -1)
-        {
-            if (map[testTile.myX, testTile.myY-1] == null)
-            {
-                tiles.Add(new MapTile(testTile.myX, testTile.myY-1));   
-            }
-        }
-
-        return tiles.Count == 0 ? null : tiles[Random.Range(0, tiles.Count)];
-    }
-}
 
 
 
